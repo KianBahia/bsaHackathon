@@ -97,6 +97,7 @@ JETTON_MASTER_ADDRESS=kQCd6G7c_HUBkgwtmGzpdqvHIQoNkYOEE0kSWoc5v57hPPnW
 
 # Facilitator URL - the Next.js app ships a built-in facilitator at /api/facilitator
 FACILITATOR_URL=http://localhost:3000/api/facilitator
+#FACILITATOR_URL=https://ton-x402-nextjs-server-lqa1jowhn-hliosones-projects.vercel.app/api/facilitator
 
 # Toncenter RPC (get a free API key at https://toncenter.com)
 TON_RPC_URL=https://testnet.toncenter.com/api/v2/jsonRPC
