@@ -1,5 +1,5 @@
 import { x402Fetch } from "@ton-x402/client";
-import { nanoToTon, atomicToJetton, decodePaymentRequired, HEADER_PAYMENT_REQUIRED } from "@ton-x402/core";
+import { nanoToTon } from "@ton-x402/core";
 import { TonClient } from "@ton/ton";
 import { WalletContractV5R1 } from "@ton/ton";
 import { mnemonicToPrivateKey } from "@ton/crypto";
@@ -42,58 +42,24 @@ async function main() {
     });
     const walletContract = client.open(wallet);
 
-    console.log(`💰 Wallet: ${wallet.address.toString({ bounceable: false })}`);
-
+    // ── Wallet info ──────────────────────────────────────────────────
     const balance = await client.getBalance(wallet.address);
-    console.log(`💎 Balance: ${nanoToTon(balance.toString())} TON`);
-
     const seqno = await walletContract.getSeqno();
-    console.log(`🔢 Seqno: ${seqno}`);
 
-    // Peek at what it costs
-    console.log(`\n🌐 Requesting: ${resourceUrl}`);
-    const peekResponse = await fetch(resourceUrl);
+    console.log("\x1b[1m\x1b[36m");
+    console.log("  ╔══════════════════════════════════════════════════════════════╗");
+    console.log("  ║              x402 on TON — Payment Demo                     ║");
+    console.log("  ╚══════════════════════════════════════════════════════════════╝\x1b[0m");
+    console.log(`\n  \x1b[1mWallet:\x1b[0m   ${wallet.address.toString({ bounceable: false })}`);
+    console.log(`  \x1b[1mBalance:\x1b[0m  ${nanoToTon(balance.toString())} TON`);
+    console.log(`  \x1b[1mSeqno:\x1b[0m    ${seqno}`);
+    console.log(`  \x1b[1mEndpoint:\x1b[0m ${resourceUrl}`);
 
-    if (peekResponse.status === 402) {
-        const header = peekResponse.headers.get(HEADER_PAYMENT_REQUIRED);
-        if (header) {
-            const required = decodePaymentRequired(header);
-            const option = required.accepts[0];
-            const isTon = option.asset === "TON";
-            const assetLabel = isTon ? "TON" : `Jetton (${option.asset})`;
-            const humanAmount = isTon
-                ? `${nanoToTon(option.amount)} TON`
-                : `${atomicToJetton(option.amount, option.decimals ?? 9)} BSA USD`;
-            console.log(`💸 Payment required: ${humanAmount}`);
-            console.log(`🪙 Asset: ${assetLabel}`);
-            console.log(`📍 Pay to: ${option.payTo}`);
-            console.log(`🌐 Network: ${option.network}`);
-        }
-    } else if (peekResponse.ok) {
-        console.log("✅ Resource is free! No payment needed.");
-        const data = await peekResponse.json();
-        console.log(data);
-        return;
-    } else {
-        console.error(`❌ Server error (${peekResponse.status}): ${peekResponse.statusText}`);
-        const text = await peekResponse.text();
-        console.error(text);
-        return;
-    }
-
-    // Pay with x402Fetch
-    const finalAmount = values.amount ?? (peekResponse.status === 402 ? decodePaymentRequired(peekResponse.headers.get(HEADER_PAYMENT_REQUIRED)!).accepts[0].amount : "0");
-    const finalTo = values.to ?? (peekResponse.status === 402 ? decodePaymentRequired(peekResponse.headers.get(HEADER_PAYMENT_REQUIRED)!).accepts[0].payTo : "");
-
-    const optionFromHeader = peekResponse.status === 402 ? decodePaymentRequired(peekResponse.headers.get(HEADER_PAYMENT_REQUIRED)!).accepts[0] : null;
-    const signLabel = !optionFromHeader || optionFromHeader.asset === "TON"
-        ? `${nanoToTon(finalAmount)} TON`
-        : `${atomicToJetton(finalAmount, optionFromHeader.decimals ?? 9)} BSA USD`;
-    console.log(`\n🔐 Signing payment: ${signLabel} to ${finalTo}...`);
     if (values.amount || values.to) {
-        console.log(`   (Using CLI overrides: amount=${values.amount ?? "default"}, to=${values.to ?? "default"})`);
+        console.log(`\n  \x1b[33m⚙  CLI overrides: amount=${values.amount ?? "default"}  to=${values.to ?? "default"}\x1b[0m`);
     }
 
+    // ── x402 flow (verbose) ──────────────────────────────────────────
     const result = await x402Fetch(resourceUrl, {
         wallet,
         keypair,
@@ -101,22 +67,24 @@ async function main() {
         client,
         amount: values.amount,
         payTo: values.to,
+        verbose: true,
     });
 
+    // ── Final result ─────────────────────────────────────────────────
     if (result.response.ok) {
-        if (result.paid && result.settlement?.txHash) {
-            console.log("✅ Payment confirmed!");
-            console.log(`📝 TX Hash: ${result.settlement.txHash}`);
-            console.log(`🌐 Network: ${result.settlement.network}`);
-        }
         const data = await result.response.json();
-        console.log("\n📦 Resource data:");
-        console.log(JSON.stringify(data, null, 2));
+        console.log("\x1b[1m\x1b[32m  ✅ Payment confirmed!\x1b[0m");
+        if (result.settlement?.txHash) {
+            console.log(`  \x1b[1mTX Hash:\x1b[0m  ${result.settlement.txHash}`);
+            console.log(`  \x1b[1mNetwork:\x1b[0m  ${result.settlement.network}`);
+        }
+        console.log("\n\x1b[1m  📦 Resource data:\x1b[0m");
+        console.log(JSON.stringify(data, null, 2).replace(/^/gm, "  "));
     } else {
         if (result.paid) {
-            console.error("⚠️  Payment broadcasted but settlement failed (tx may still confirm on-chain)");
+            console.error("\x1b[33m  ⚠️  Payment broadcasted but settlement failed (tx may still confirm on-chain)\x1b[0m");
         }
-        console.error(`❌ Request failed: ${result.response.status}`);
+        console.error(`\x1b[31m  ❌ Request failed: ${result.response.status}\x1b[0m`);
         const text = await result.response.text();
         console.error(text);
     }

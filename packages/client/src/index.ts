@@ -6,6 +6,8 @@ import {
     encodePaymentPayload,
     decodeSettlementResponse,
     generateQueryId,
+    atomicToJetton,
+    nanoToTon,
     HEADER_PAYMENT_REQUIRED,
     HEADER_PAYMENT_SIGNATURE,
     HEADER_PAYMENT_RESPONSE,
@@ -46,12 +48,49 @@ export interface X402ClientConfig {
     client?: TonClient;
     amount?: string;
     payTo?: string;
+    verbose?: boolean;
 }
 
 export interface X402FetchResult {
     response: Response;
     settlement?: SettlementResponse;
     paid: boolean;
+}
+
+// ============================================================
+// Verbose logger
+// ============================================================
+
+const c = {
+    reset:   "\x1b[0m",
+    bold:    "\x1b[1m",
+    dim:     "\x1b[2m",
+    cyan:    "\x1b[36m",
+    yellow:  "\x1b[33m",
+    green:   "\x1b[32m",
+    red:     "\x1b[31m",
+    gray:    "\x1b[90m",
+    magenta: "\x1b[35m",
+    blue:    "\x1b[34m",
+    white:   "\x1b[97m",
+};
+
+function banner(step: string, title: string) {
+    const line = "─".repeat(62);
+    console.log(`\n${c.bold}${c.cyan}┌${line}┐${c.reset}`);
+    console.log(`${c.bold}${c.cyan}│${c.reset}  ${c.bold}${c.white}${step}${c.reset}${c.bold}  ${title}${c.reset}`);
+    console.log(`${c.bold}${c.cyan}└${line}┘${c.reset}`);
+}
+
+function headerBox(name: string, raw: string, decoded: object) {
+    const short = raw.length > 80 ? raw.slice(0, 77) + "..." : raw;
+    console.log(`\n  ${c.bold}${c.magenta}◆ ${name}${c.reset}`);
+    console.log(`  ${c.gray}  raw  : ${short}${c.reset}`);
+    console.log(`  ${c.cyan}  value:${c.reset} ${JSON.stringify(decoded, null, 2).replace(/\n/g, "\n         ")}`);
+}
+
+function arrow(direction: "→" | "←", color: string, label: string) {
+    console.log(`\n  ${c.bold}${color}${direction}${c.reset} ${label}`);
 }
 
 // ============================================================
@@ -146,6 +185,7 @@ async function createSignedBoc(
  * 2. If 402 → reads PAYMENT-REQUIRED, signs BOC, retries with PAYMENT-SIGNATURE
  * 3. Returns the final response with settlement info
  *
+ * Pass `verbose: true` in config to log the full HTTP + payment flow.
  * The client NEVER broadcasts — the signed BOC goes to the facilitator.
  */
 export async function x402Fetch(
@@ -153,12 +193,22 @@ export async function x402Fetch(
     config: X402ClientConfig,
     init?: RequestInit,
 ): Promise<X402FetchResult> {
-    const { wallet, keypair } = config;
+    const { wallet, keypair, verbose = false } = config;
+    const urlStr = url.toString();
 
-    // Step 1: Initial request
+    // ── Step 1: Initial request ──────────────────────────────────────
+    if (verbose) {
+        banner("STEP 1/3", "Initial Request  (no payment attached)");
+        arrow("→", c.yellow, `GET ${c.bold}${urlStr}${c.reset}`);
+        console.log(`  ${c.gray}  headers: (none — first probe)${c.reset}`);
+    }
+
     const firstResponse = await fetch(url, init);
 
     if (firstResponse.status !== 402) {
+        if (verbose) {
+            arrow("←", c.green, `${c.bold}${c.green}${firstResponse.status} ${firstResponse.statusText}${c.reset}  (no payment needed)`);
+        }
         return { response: firstResponse, paid: false };
     }
 
@@ -170,6 +220,11 @@ export async function x402Fetch(
 
     const paymentRequired: PaymentRequired = decodePaymentRequired(paymentRequiredHeader);
 
+    if (verbose) {
+        arrow("←", c.yellow, `${c.bold}${c.yellow}402 Payment Required${c.reset}`);
+        headerBox(HEADER_PAYMENT_REQUIRED, paymentRequiredHeader, paymentRequired);
+    }
+
     const tonOption = paymentRequired.accepts.find(
         (a) => a.scheme === "ton-v1"
     );
@@ -179,7 +234,7 @@ export async function x402Fetch(
         );
     }
 
-    // Step 3: Determine seqno
+    // ── Step 2: Determine seqno ──────────────────────────────────────
     let seqno = config.seqno;
     if (seqno === undefined) {
         if ("getSeqno" in wallet && typeof (wallet as any).getSeqno === "function") {
@@ -192,8 +247,27 @@ export async function x402Fetch(
         }
     }
 
-    // Step 4: Sign BOC
+    // ── Step 3: Sign BOC ─────────────────────────────────────────────
     const queryId = generateQueryId();
+
+    if (verbose) {
+        banner("STEP 2/3", "Build & Sign Payment  (local — nothing broadcast yet)");
+
+        const isTon = tonOption.asset === "TON";
+        const humanAmount = isTon
+            ? `${nanoToTon(config.amount ?? tonOption.amount)} TON`
+            : `${atomicToJetton(config.amount ?? tonOption.amount, tonOption.decimals ?? 9)} BSA USD`;
+        const assetLabel = isTon ? "TON (native)" : `Jetton  ${tonOption.asset}`;
+
+        console.log(`\n  ${c.bold}asset:${c.reset}       ${assetLabel}`);
+        console.log(`  ${c.bold}amount:${c.reset}      ${c.green}${humanAmount}${c.reset}  ${c.gray}(${config.amount ?? tonOption.amount} atomic)${c.reset}`);
+        console.log(`  ${c.bold}payTo:${c.reset}       ${config.payTo ?? tonOption.payTo}`);
+        console.log(`  ${c.bold}from:${c.reset}        ${wallet.address.toString({ bounceable: false })}`);
+        console.log(`  ${c.bold}network:${c.reset}     ${tonOption.network}`);
+        console.log(`  ${c.bold}queryId:${c.reset}     ${queryId}  ${c.gray}(unique tx identifier)${c.reset}`);
+        console.log(`  ${c.bold}seqno:${c.reset}       ${seqno}  ${c.gray}(wallet sequence number — replay protection)${c.reset}`);
+    }
+
     const boc = await createSignedBoc(
         wallet,
         keypair,
@@ -214,11 +288,33 @@ export async function x402Fetch(
         queryId,
     };
 
-    // Step 6: Retry with PAYMENT-SIGNATURE
+    const encodedPayload = encodePaymentPayload(paymentPayload);
+
+    if (verbose) {
+        console.log(`  ${c.bold}BOC:${c.reset}         ${c.gray}${boc.slice(0, 48)}...${c.reset}  ${c.dim}(${Math.ceil(boc.length * 3 / 4)} bytes, base64-encoded signed cell)${c.reset}`);
+        headerBox(HEADER_PAYMENT_SIGNATURE, encodedPayload, {
+            scheme: paymentPayload.scheme,
+            network: paymentPayload.network,
+            fromAddress: paymentPayload.fromAddress,
+            queryId: paymentPayload.queryId,
+            boc: boc.slice(0, 24) + "... (truncated)",
+        });
+    }
+
+    // ── Step 4: Retry with PAYMENT-SIGNATURE ─────────────────────────
     const retryInit: RequestInit = { ...init };
     const headers = new Headers(init?.headers);
-    headers.set(HEADER_PAYMENT_SIGNATURE, encodePaymentPayload(paymentPayload));
+    headers.set(HEADER_PAYMENT_SIGNATURE, encodedPayload);
     retryInit.headers = headers;
+
+    if (verbose) {
+        banner("STEP 3/3", "Retry Request  (with payment signature)");
+        arrow("→", c.yellow, `GET ${c.bold}${urlStr}${c.reset}`);
+        const shortSig = encodedPayload.length > 60 ? encodedPayload.slice(0, 57) + "..." : encodedPayload;
+        console.log(`  ${c.gray}  ${HEADER_PAYMENT_SIGNATURE}: ${shortSig}${c.reset}`);
+        console.log(`\n  ${c.dim}  [server] → POST ${tonOption.facilitatorUrl}/verify${c.reset}`);
+        console.log(`  ${c.dim}  [server] → POST ${tonOption.facilitatorUrl}/settle  (broadcast + poll)${c.reset}`);
+    }
 
     const secondResponse = await fetch(url, retryInit);
 
@@ -227,6 +323,15 @@ export async function x402Fetch(
     let settlement: SettlementResponse | undefined;
     if (paymentResponseHeader) {
         settlement = decodeSettlementResponse(paymentResponseHeader);
+    }
+
+    if (verbose) {
+        const statusColor = secondResponse.ok ? c.green : c.red;
+        arrow("←", statusColor, `${c.bold}${statusColor}${secondResponse.status} ${secondResponse.statusText}${c.reset}`);
+        if (paymentResponseHeader && settlement) {
+            headerBox(HEADER_PAYMENT_RESPONSE, paymentResponseHeader, settlement);
+        }
+        console.log();
     }
 
     return {

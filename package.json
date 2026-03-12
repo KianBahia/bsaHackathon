@@ -14,7 +14,7 @@
     "dev:client": "pnpm --filter x402-client-example pay",
     "dev:client:joke": "pnpm --filter x402-client-example pay:joke",
     "address": "pnpm --filter x402-client-example address --",
-    "build": "pnpm -r build",
+    "build": "pnpm --filter './packages/**' -r build",
     "clean": "rm -rf packages/*/dist",
     "typecheck": "pnpm -r exec tsc --noEmit"
   },
