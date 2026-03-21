@@ -46,8 +46,9 @@ export function PostCard({ post }: { post: Post }) {
             {isLocked && <div className="absolute inset-0 bg-black/30 flex items-center justify-center"><Lock size={11} className="text-white" /></div>}
           </div>
         ) : (
-          <div className={`w-full h-full ${iconBg} flex items-center justify-center`}>
+          <div className={`relative w-full h-full ${iconBg} flex items-center justify-center`}>
             <TypeIcon type={post.contentType} />
+            {isLocked && <div className="absolute inset-0 bg-black/40 flex items-center justify-center"><Lock size={11} className="text-white" /></div>}
           </div>
         )}
       </div>
