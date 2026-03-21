@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 const BYPASS_PATTERNS = [
   /^\/api\/facilitator/,
+  /^\/api\/uploadthing/,
   /^\/api\/telegram-webhook/,
   /^\/api\/wallet\/bot-status$/,
   /^\/api\/setup-webhook$/,
@@ -82,9 +83,10 @@ export async function middleware(request: NextRequest) {
   }
 
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
+  const isDev    = process.env.NODE_ENV !== "production";
 
+  // No bot token OR running in dev mode without real init data → inject mock user
   if (!botToken) {
-    // Dev mode: inject mock user into request headers (not response headers)
     const requestHeaders = new Headers(request.headers);
     requestHeaders.set("x-telegram-user-id", "dev-user-123");
     requestHeaders.set("x-telegram-username", "devuser");
@@ -92,6 +94,14 @@ export async function middleware(request: NextRequest) {
   }
 
   const initData = request.headers.get("x-telegram-init-data");
+
+  // In development, allow requests with no init data and inject a stable dev user
+  if (!initData && isDev) {
+    const requestHeaders = new Headers(request.headers);
+    requestHeaders.set("x-telegram-user-id", "dev-user-123");
+    requestHeaders.set("x-telegram-username", "devuser");
+    return NextResponse.next({ request: { headers: requestHeaders } });
+  }
 
   if (!initData) {
     return NextResponse.json(

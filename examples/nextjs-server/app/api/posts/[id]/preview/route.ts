@@ -13,6 +13,7 @@ export async function GET(
       title: true,
       description: true,
       contentType: true,
+      contentUrl: true,
       previewUrl: true,
       accessType: true,
       creditPrice: true,
@@ -26,5 +27,11 @@ export async function GET(
     },
   });
   if (!post) return Response.json({ error: "Not found" }, { status: 404 });
-  return Response.json(post);
+
+  // Only expose contentUrl for free posts — paid posts must go through /content
+  const { contentUrl, ...rest } = post;
+  return Response.json({
+    ...rest,
+    contentUrl: post.accessType === "FREE" ? contentUrl : undefined,
+  });
 }

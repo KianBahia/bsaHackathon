@@ -33,7 +33,15 @@ export default function PostPage({ params }: { params: Promise<{ id: string }> }
 
   useEffect(() => {
     createApiClient(initData)(`/api/posts/${id}/preview`)
-      .then((r) => r.json()).then(setPost).finally(() => setLoading(false));
+      .then((r) => r.json())
+      .then((data) => {
+        setPost(data);
+        // Free posts include contentUrl directly — no unlock needed
+        if (data.accessType === "FREE" && data.contentUrl) {
+          setContentUrl(data.contentUrl);
+        }
+      })
+      .finally(() => setLoading(false));
   }, [id, initData]);
 
   const handleUnlock = async () => {

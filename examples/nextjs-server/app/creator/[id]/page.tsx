@@ -80,7 +80,9 @@ export default function CreatorPage({ params }: { params: Promise<{ id: string }
             <p className="text-[13px] font-semibold text-label2 uppercase tracking-wide px-4 mb-1">Membership</p>
             <div className="bg-surface rounded-2xl overflow-hidden mx-4">
               {creator.tiers.map((tier, i) => {
-                const perks: string[] = tier.perks ? JSON.parse(tier.perks) : [];
+                const perks: string[] = tier.perks
+                  ? tier.perks.split(/[,\n]+/).map((s) => s.trim()).filter(Boolean)
+                  : [];
                 return (
                   <div key={tier.id} className={`px-4 py-3.5 ${i < creator.tiers.length - 1 ? "border-b border-sep" : ""}`}>
                     <div className="flex items-start justify-between gap-3">

@@ -3,25 +3,36 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   TrendingUp, Users, FileText, Plus, Lock, ChevronRight,
-  Star, PenLine, Check, X,
+  Star, PenLine, Check, X, Trash2, Crown,
 } from "lucide-react";
 import { BottomNav } from "../../components/BottomNav";
+import { FileUpload } from "../../components/FileUpload";
 import { useTelegram } from "../../components/TelegramProvider";
 import { createApiClient } from "../../lib/api-client";
 
 interface Earnings { totalCreditsEarned: number; subscriberCount: number; postCount: number; }
 interface Post { id: string; title: string; accessType: string; creditPrice: number; _count: { unlocks: number }; }
 interface Profile { id: string; displayName: string; bio?: string | null; avatarUrl?: string | null; }
+interface Tier { id: string; name: string; creditsPerMonth: number; description?: string | null; perks?: string | null; }
 
 export default function DashboardPage() {
   const [earnings, setEarnings]     = useState<Earnings | null>(null);
   const [posts, setPosts]           = useState<Post[]>([]);
   const [profile, setProfile]       = useState<Profile | null>(null);
+  const [tiers, setTiers]           = useState<Tier[]>([]);
   const [loading, setLoading]       = useState(true);
   const [notCreator, setNotCreator] = useState(false);
   const [editingProfile, setEditingProfile] = useState(false);
   const [profileForm, setProfileForm] = useState({ displayName: "", bio: "", avatarUrl: "" });
   const [savingProfile, setSavingProfile] = useState(false);
+  const [saveError, setSaveError]         = useState<string | null>(null);
+  // Tier management state
+  const [showTierForm, setShowTierForm]   = useState(false);
+  const [editingTier, setEditingTier]     = useState<Tier | null>(null);
+  const [tierForm, setTierForm]           = useState({ name: "", creditsPerMonth: "", description: "", perks: "" });
+  const [savingTier, setSavingTier]       = useState(false);
+  const [tierError, setTierError]         = useState<string | null>(null);
+  const [deletingTierId, setDeletingTierId] = useState<string | null>(null);
   const { initData, user, isReady } = useTelegram();
 
   useEffect(() => {
@@ -31,15 +42,22 @@ export default function DashboardPage() {
       api("/api/dashboard/earnings"),
       api("/api/dashboard/posts"),
       api("/api/dashboard/profile"),
-    ]).then(async ([e, p, pr]) => {
+      api("/api/dashboard/tiers"),
+    ]).then(async ([e, p, pr, t]) => {
       if (e.status === 404) {
         setNotCreator(true);
+        // Pre-fill display name from Telegram user for first-time setup
+        if (user) {
+          const fallback = user.username ? `@${user.username}` : (user.firstName ?? "");
+          setProfileForm((f) => ({ ...f, displayName: f.displayName || fallback }));
+        }
       } else {
-        const [earningsData, postsData, profileData] = await Promise.all([
-          e.json(), p.json(), pr.json(),
+        const [earningsData, postsData, profileData, tiersData] = await Promise.all([
+          e.json(), p.json(), pr.json(), t.json(),
         ]);
         setEarnings(earningsData);
         setPosts(Array.isArray(postsData) ? postsData : []);
+        setTiers(Array.isArray(tiersData) ? tiersData : []);
         if (profileData && !profileData.error) {
           setProfile(profileData);
           setProfileForm({
@@ -51,31 +69,104 @@ export default function DashboardPage() {
       }
       setLoading(false);
     });
-  }, [isReady, initData]);
+  }, [isReady, initData, user]);
 
   const saveProfile = async () => {
     setSavingProfile(true);
-    const res = await createApiClient(initData)("/api/dashboard/profile", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        displayName: profileForm.displayName || undefined,
-        bio: profileForm.bio || null,
-        avatarUrl: profileForm.avatarUrl || null,
-      }),
-    });
-    if (res.ok) {
-      const updated = await res.json();
-      setProfile(updated);
+    setSaveError(null);
+    try {
+      const res = await createApiClient(initData)("/api/dashboard/profile", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          displayName: profileForm.displayName.trim(),
+          bio: profileForm.bio.trim() || null,
+          avatarUrl: profileForm.avatarUrl || null,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setSaveError(data.error ?? `Save failed (${res.status})`);
+        return;
+      }
+      setProfile(data);
       setNotCreator(false);
       setEditingProfile(false);
-      // Reload earnings/posts now that creator exists
+      setSaveError(null);
+      // Reload stats now that creator exists
       const api = createApiClient(initData);
       const [e, p] = await Promise.all([api("/api/dashboard/earnings"), api("/api/dashboard/posts")]);
       if (e.ok) setEarnings(await e.json());
       if (p.ok) setPosts(await p.json().then((d: Post[] | unknown) => Array.isArray(d) ? d : []));
+    } catch (err) {
+      setSaveError("Network error — please try again");
+    } finally {
+      setSavingProfile(false);
     }
-    setSavingProfile(false);
+  };
+
+  const openNewTierForm = () => {
+    setEditingTier(null);
+    setTierForm({ name: "", creditsPerMonth: "", description: "", perks: "" });
+    setTierError(null);
+    setShowTierForm(true);
+  };
+
+  const openEditTierForm = (tier: Tier) => {
+    setEditingTier(tier);
+    setTierForm({
+      name: tier.name,
+      creditsPerMonth: String(tier.creditsPerMonth),
+      description: tier.description ?? "",
+      perks: tier.perks ?? "",
+    });
+    setTierError(null);
+    setShowTierForm(true);
+  };
+
+  const saveTier = async () => {
+    if (!tierForm.name.trim()) { setTierError("Name is required"); return; }
+    const credits = parseInt(tierForm.creditsPerMonth, 10);
+    if (!credits || credits < 1) { setTierError("Price must be at least 1 credit/month"); return; }
+    setSavingTier(true);
+    setTierError(null);
+    try {
+      const api = createApiClient(initData);
+      const url = editingTier ? `/api/dashboard/tiers/${editingTier.id}` : "/api/dashboard/tiers";
+      const res = await api(url, {
+        method: editingTier ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: tierForm.name.trim(),
+          creditsPerMonth: credits,
+          description: tierForm.description.trim() || null,
+          perks: tierForm.perks.trim() || null,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setTierError(data.error ?? "Save failed"); return; }
+      setTiers((prev) =>
+        editingTier
+          ? prev.map((t) => (t.id === editingTier.id ? data : t))
+          : [...prev, data]
+      );
+      setShowTierForm(false);
+      setEditingTier(null);
+    } catch {
+      setTierError("Network error — please try again");
+    } finally {
+      setSavingTier(false);
+    }
+  };
+
+  const deleteTier = async (id: string) => {
+    setDeletingTierId(id);
+    try {
+      const res = await createApiClient(initData)(`/api/dashboard/tiers/${id}`, { method: "DELETE" });
+      if (res.ok) setTiers((prev) => prev.filter((t) => t.id !== id));
+    } finally {
+      setDeletingTierId(null);
+    }
   };
 
   if (loading) return (
@@ -106,15 +197,15 @@ export default function DashboardPage() {
       <main className="max-w-mobile mx-auto pb-28 pt-2">
         {/* Profile card — always shown */}
         <div className="flex flex-col items-center py-6 px-4">
-          <div className="w-20 h-20 rounded-full overflow-hidden bg-surface ring-[3px] ring-sep flex items-center justify-center mb-3">
-            {profile?.avatarUrl ? (
-              <img src={profile.avatarUrl} alt={displayName} className="w-full h-full object-cover" />
-            ) : (
-              <span className="text-[28px] font-bold text-label2">{initials}</span>
-            )}
-          </div>
           {!editingProfile ? (
             <>
+              <div className="w-20 h-20 rounded-full overflow-hidden bg-surface ring-[3px] ring-sep flex items-center justify-center mb-3">
+                {profile?.avatarUrl ? (
+                  <img src={profile.avatarUrl} alt={displayName} className="w-full h-full object-cover" />
+                ) : (
+                  <span className="text-[28px] font-bold text-label2">{initials}</span>
+                )}
+              </div>
               <h1 className="text-[20px] font-bold text-white">{displayName}</h1>
               {profile?.bio && <p className="text-[14px] text-label2 mt-1 text-center max-w-xs">{profile.bio}</p>}
               <button
@@ -126,30 +217,41 @@ export default function DashboardPage() {
               </button>
             </>
           ) : (
-            <div className="w-full mt-2">
-              <div className="bg-surface rounded-2xl overflow-hidden mx-0 mb-3">
+            <div className="w-full">
+              {/* Avatar upload */}
+              <FileUpload
+                endpoint="avatar"
+                value={profileForm.avatarUrl}
+                onChange={(url) => setProfileForm((f) => ({ ...f, avatarUrl: url }))}
+                shape="circle"
+              />
+
+              {/* Name + bio fields */}
+              <div className="bg-surface rounded-2xl overflow-hidden mt-4 mb-3">
                 <input
                   value={profileForm.displayName}
                   onChange={(e) => setProfileForm((f) => ({ ...f, displayName: e.target.value }))}
-                  placeholder="Display name"
+                  placeholder="Display name *"
                   className="w-full bg-transparent px-4 py-3.5 text-[15px] text-white placeholder-label2 focus:outline-none border-b border-sep"
                 />
-                <input
+                <textarea
                   value={profileForm.bio}
                   onChange={(e) => setProfileForm((f) => ({ ...f, bio: e.target.value }))}
-                  placeholder="Bio (optional)"
-                  className="w-full bg-transparent px-4 py-3.5 text-[15px] text-white placeholder-label2 focus:outline-none border-b border-sep"
-                />
-                <input
-                  value={profileForm.avatarUrl}
-                  onChange={(e) => setProfileForm((f) => ({ ...f, avatarUrl: e.target.value }))}
-                  placeholder="Avatar URL (optional)"
-                  className="w-full bg-transparent px-4 py-3.5 text-[15px] text-white placeholder-label2 focus:outline-none"
+                  placeholder="Bio — tell people what you create"
+                  rows={3}
+                  className="w-full bg-transparent px-4 py-3.5 text-[15px] text-white placeholder-label2 focus:outline-none resize-none"
                 />
               </div>
+
+              {saveError && (
+                <div className="bg-red-950/40 border border-red-500/20 text-red-400 text-[13px] rounded-xl px-4 py-3 mb-3">
+                  {saveError}
+                </div>
+              )}
+
               <div className="flex gap-3">
                 <button
-                  onClick={() => setEditingProfile(false)}
+                  onClick={() => { setEditingProfile(false); setSaveError(null); }}
                   className="flex-1 flex items-center justify-center gap-1.5 bg-surface text-label2 font-semibold py-3 rounded-2xl text-[15px] active:opacity-80"
                 >
                   <X size={16} />Cancel
@@ -166,6 +268,9 @@ export default function DashboardPage() {
                   )}
                 </button>
               </div>
+              {!profileForm.displayName.trim() && (
+                <p className="text-[12px] text-label2 text-center mt-2">Display name is required</p>
+              )}
             </div>
           )}
         </div>
@@ -202,6 +307,131 @@ export default function DashboardPage() {
                   <p className="text-[11px] text-label2 mt-1">{label}</p>
                 </div>
               ))}
+            </div>
+
+            {/* Subscription Tiers */}
+            <div className="mx-4 mb-5">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-[13px] font-semibold text-label2 uppercase tracking-wide">Subscription Tiers</p>
+                {!showTierForm && (
+                  <button onClick={openNewTierForm} className="flex items-center gap-1 text-tg-blue text-[13px]">
+                    <Plus size={14} />Add Tier
+                  </button>
+                )}
+              </div>
+
+              {/* Inline tier form */}
+              {showTierForm && (
+                <div className="bg-surface rounded-2xl overflow-hidden mb-3">
+                  <p className="text-[13px] font-semibold text-white px-4 pt-3.5 pb-1">
+                    {editingTier ? "Edit Tier" : "New Tier"}
+                  </p>
+                  <div className="border-t border-sep">
+                    <input
+                      value={tierForm.name}
+                      onChange={(e) => setTierForm((f) => ({ ...f, name: e.target.value }))}
+                      placeholder="Tier name *"
+                      className="w-full bg-transparent px-4 py-3 text-[15px] text-white placeholder-label2 focus:outline-none border-b border-sep"
+                    />
+                    <input
+                      value={tierForm.creditsPerMonth}
+                      onChange={(e) => setTierForm((f) => ({ ...f, creditsPerMonth: e.target.value }))}
+                      placeholder="Credits / month *"
+                      type="number"
+                      min={1}
+                      className="w-full bg-transparent px-4 py-3 text-[15px] text-white placeholder-label2 focus:outline-none border-b border-sep"
+                    />
+                    <input
+                      value={tierForm.description}
+                      onChange={(e) => setTierForm((f) => ({ ...f, description: e.target.value }))}
+                      placeholder="Short description (optional)"
+                      className="w-full bg-transparent px-4 py-3 text-[15px] text-white placeholder-label2 focus:outline-none border-b border-sep"
+                    />
+                    <textarea
+                      value={tierForm.perks}
+                      onChange={(e) => setTierForm((f) => ({ ...f, perks: e.target.value }))}
+                      placeholder={"Perks — e.g. Early access, DMs, custom content (optional)"}
+                      rows={2}
+                      className="w-full bg-transparent px-4 py-3 text-[15px] text-white placeholder-label2 focus:outline-none resize-none"
+                    />
+                  </div>
+                  {tierError && (
+                    <div className="bg-red-950/40 border-t border-red-500/20 text-red-400 text-[13px] px-4 py-2.5">
+                      {tierError}
+                    </div>
+                  )}
+                  <div className="flex gap-0 border-t border-sep">
+                    <button
+                      onClick={() => { setShowTierForm(false); setEditingTier(null); setTierError(null); }}
+                      className="flex-1 flex items-center justify-center gap-1.5 text-label2 py-3.5 text-[15px] border-r border-sep active:opacity-60"
+                    >
+                      <X size={15} />Cancel
+                    </button>
+                    <button
+                      onClick={saveTier}
+                      disabled={savingTier}
+                      className="flex-1 flex items-center justify-center gap-1.5 text-tg-blue font-semibold py-3.5 text-[15px] active:opacity-60 disabled:opacity-50"
+                    >
+                      {savingTier
+                        ? <div className="w-4 h-4 rounded-full border-2 border-tg-blue border-t-transparent animate-spin" />
+                        : <><Check size={15} />{editingTier ? "Update" : "Create"}</>
+                      }
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Tiers list */}
+              {tiers.length === 0 && !showTierForm ? (
+                <div className="bg-surface rounded-2xl px-4 py-6 flex flex-col items-center text-center">
+                  <Crown size={24} className="text-sep mb-2" />
+                  <p className="text-[14px] text-label2 mb-3">No subscription tiers yet</p>
+                  <button
+                    onClick={openNewTierForm}
+                    className="flex items-center gap-1.5 bg-tg-blue text-white text-[13px] font-semibold px-3.5 py-2 rounded-xl active:opacity-80"
+                  >
+                    <Plus size={13} />Create First Tier
+                  </button>
+                </div>
+              ) : tiers.length > 0 && (
+                <div className="bg-surface rounded-2xl overflow-hidden">
+                  {tiers.map((tier, i) => (
+                    <div
+                      key={tier.id}
+                      className={`flex items-center gap-3 px-4 py-3.5 ${i < tiers.length - 1 ? "border-b border-sep" : ""}`}
+                    >
+                      <div className="w-9 h-9 rounded-[8px] bg-elevated flex items-center justify-center flex-shrink-0">
+                        <Crown size={16} className="text-yellow-400" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[15px] text-white truncate">{tier.name}</p>
+                        <p className="text-[13px] text-label2 mt-0.5">{tier.creditsPerMonth} credits / month</p>
+                        {tier.description && (
+                          <p className="text-[12px] text-label2 mt-0.5 truncate">{tier.description}</p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => openEditTierForm(tier)}
+                          className="p-2 text-label2 active:text-white active:opacity-60"
+                        >
+                          <PenLine size={15} />
+                        </button>
+                        <button
+                          onClick={() => deleteTier(tier.id)}
+                          disabled={deletingTierId === tier.id}
+                          className="p-2 text-label2 active:text-red-400 disabled:opacity-40"
+                        >
+                          {deletingTierId === tier.id
+                            ? <div className="w-3.5 h-3.5 rounded-full border-2 border-label2 border-t-transparent animate-spin" />
+                            : <Trash2 size={15} />
+                          }
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Posts list */}
