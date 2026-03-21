@@ -1,0 +1,97 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Creator {
+  id               String             @id @default(cuid())
+  telegramUserId   String             @unique
+  telegramUsername String?
+  channelId        String?
+  displayName      String
+  bio              String?
+  avatarUrl        String?
+  walletAddress    String?
+  createdAt        DateTime           @default(now())
+  posts            Post[]
+  tiers            SubscriptionTier[]
+  subscriptions    Subscription[]
+}
+
+model Post {
+  id                 String    @id @default(cuid())
+  creatorId          String
+  creator            Creator   @relation(fields: [creatorId], references: [id])
+  title              String
+  description        String?
+  contentType        String    @default("TEXT")
+  contentUrl         String
+  previewUrl         String?
+  accessType         String    @default("FREE")
+  creditPrice        Int       @default(0)
+  groupUnlockTarget  Int?
+  groupUnlockCurrent Int       @default(0)
+  tier               String?
+  createdAt          DateTime  @default(now())
+  publishedAt        DateTime?
+  unlocks            Unlock[]
+}
+
+model SubscriptionTier {
+  id              String         @id @default(cuid())
+  creatorId       String
+  creator         Creator        @relation(fields: [creatorId], references: [id])
+  name            String
+  creditsPerMonth Int
+  description     String?
+  perks           String?
+  subscriptions   Subscription[]
+}
+
+model Subscription {
+  id        String           @id @default(cuid())
+  userId    String
+  creatorId String
+  creator   Creator          @relation(fields: [creatorId], references: [id])
+  tierId    String
+  tier      SubscriptionTier @relation(fields: [tierId], references: [id])
+  status    String           @default("ACTIVE")
+  startedAt DateTime         @default(now())
+  renewsAt  DateTime
+
+  @@unique([userId, creatorId])
+}
+
+model Unlock {
+  id          String   @id @default(cuid())
+  userId      String
+  postId      String
+  post        Post     @relation(fields: [postId], references: [id])
+  txHash      String?
+  paidCredits Int
+  paidAt      DateTime @default(now())
+
+  @@unique([userId, postId])
+}
+
+model UserWallet {
+  id             String   @id @default(cuid())
+  telegramUserId String   @unique
+  creditBalance  Int      @default(0)
+  tonAddress     String?
+  updatedAt      DateTime @updatedAt
+}
+
+model InvoiceRecord {
+  id              String    @id @default(cuid())
+  telegramUserId  String
+  credits         Int
+  starsAmount     Int
+  invoicePayload  String    @unique
+  status          String    @default("PENDING")
+  createdAt       DateTime  @default(now())
+  paidAt          DateTime?
+}
