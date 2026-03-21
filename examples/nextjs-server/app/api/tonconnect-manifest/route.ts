@@ -4,7 +4,7 @@ export async function GET() {
   const manifest = {
     url: appUrl,
     name: "Ribbit",
-    iconUrl: `${appUrl}/logo-text-white.png`,
+    iconUrl: `${appUrl}/images/logo.png`,
   };
 
   return Response.json(manifest, {

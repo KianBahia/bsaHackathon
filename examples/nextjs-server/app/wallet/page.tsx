@@ -61,22 +61,24 @@ export default function WalletPage() {
   const loadWallet = useCallback(async () => {
     const api = createApiClient(initData);
     try {
-      const [walletData, botRes, webhookRes] = await Promise.all([
+      const [walletData, botRes] = await Promise.all([
         fetchBalance(),
         api("/api/wallet/bot-status"),
-        fetch("/api/setup-webhook", { method: "POST" }),
       ]);
 
       if (walletData) setWallet(walletData);
 
       if (botRes.ok) {
         const botData = await botRes.json();
-        setHasBot(botData.configured === true);
-      }
+        const botConfigured = botData.configured === true;
+        setHasBot(botConfigured);
 
-      if (webhookRes.ok) {
-        const whData = await webhookRes.json();
-        setWebhookOk(whData.registered === true);
+        // Auto-register the webhook whenever the wallet page loads so Stars
+        // payments are always routed correctly without manual setup.
+        if (botConfigured) {
+          const webhookRes = await fetch("/api/setup-webhook");
+          setWebhookOk(webhookRes.ok);
+        }
       }
     } catch {
       // network error
@@ -130,13 +132,12 @@ export default function WalletPage() {
   };
 
   const handleBuyStars = async (pkg: typeof PACKAGES[number]) => {
-    if (!user) return;
     setBuying(pkg.credits);
     try {
       const res = await createApiClient(initData)("/api/wallet/create-invoice", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ credits: pkg.credits, userId: String(user.id) }),
+        body: JSON.stringify({ credits: pkg.credits }),
       });
       const json = await res.json();
       if (!res.ok || json.error) {
@@ -149,11 +150,15 @@ export default function WalletPage() {
         if (status === "paid") startPolling();
       };
 
-      if (typeof window !== "undefined" && (window as any).Telegram?.WebApp?.openInvoice) {
-        (window as any).Telegram.WebApp.openInvoice(invoiceUrl, onPaid);
+      const twa = typeof window !== "undefined" && (window as any).Telegram?.WebApp;
+      if (twa?.openInvoice) {
+        twa.openInvoice(invoiceUrl, onPaid);
       } else {
         window.open(invoiceUrl, "_blank");
       }
+    } catch (err) {
+      alert("Something went wrong. Please try again.");
+      console.error("[handleBuyStars]", err);
     } finally {
       setBuying(null);
     }
@@ -284,8 +289,8 @@ export default function WalletPage() {
           </>
         )}
 
-        {/* Dev top-up (no bot token) */}
-        {!loading && !hasBot && (
+        {/* Dev top-up — always visible in development, otherwise only when no bot token */}
+        {!loading && (!hasBot || process.env.NODE_ENV === "development") && (
           <>
             <p className="text-[13px] font-semibold text-label2 uppercase tracking-wide px-4 mb-1">Add Credits</p>
             <div className="bg-surface rounded-2xl overflow-hidden mx-4 mb-5">

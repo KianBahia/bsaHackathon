@@ -1,8 +1,5 @@
 import { NextRequest } from "next/server";
-import { paymentGate } from "@ton-x402/middleware";
-import { getPaymentConfig } from "../../../lib/payment-config";
 import { prisma } from "../../../lib/prisma";
-import { creditsToNano } from "../../../lib/credits";
 
 export async function GET(req: NextRequest) {
   const userId = req.headers.get("x-telegram-user-id") ?? "anon";
@@ -17,37 +14,72 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const body = await request.clone().json().catch(() => ({}));
+  const userId = request.headers.get("x-telegram-user-id") ?? "anon";
+  const body = await request.json().catch(() => ({}));
   const { tierId, creatorId } = body;
 
   if (!tierId || !creatorId) {
     return Response.json({ error: "tierId and creatorId required" }, { status: 400 });
   }
 
-  const tier = await prisma.subscriptionTier.findUnique({ where: { id: tierId } });
+  const tier = await prisma.subscriptionTier.findUnique({
+    where: { id: tierId },
+    include: { creator: { select: { telegramUserId: true } } },
+  });
   if (!tier) return Response.json({ error: "Tier not found" }, { status: 404 });
 
-  const amount = creditsToNano(tier.creditsPerMonth);
-  const config = getPaymentConfig({
-    amount,
-    asset: process.env.JETTON_MASTER_ADDRESS || "TON",
-    description: `Subscribe: ${tier.name} (${tier.creditsPerMonth} credits/month)`,
-    decimals: 9,
+  // Prevent re-subscribing to an already active subscription
+  const existing = await prisma.subscription.findUnique({
+    where: { userId_creatorId: { userId, creatorId } },
   });
+  if (existing?.status === "ACTIVE") {
+    return Response.json({ error: "Already subscribed" }, { status: 409 });
+  }
 
-  const handler = async (req: Request) => {
-    const userId = req.headers.get("x-telegram-user-id") ?? "anon";
+  const price = tier.creditsPerMonth;
+
+  if (price > 0) {
+    const userWallet = await prisma.userWallet.findUnique({
+      where: { telegramUserId: userId },
+    });
+    const balance = userWallet?.creditBalance ?? 0;
+
+    if (balance < price) {
+      return Response.json(
+        { error: "Insufficient credits", required: price, balance },
+        { status: 402 }
+      );
+    }
+
     const renewsAt = new Date();
     renewsAt.setMonth(renewsAt.getMonth() + 1);
 
+    // Atomic: deduct from subscriber + credit creator + record subscription
+    await prisma.$transaction([
+      prisma.userWallet.update({
+        where: { telegramUserId: userId },
+        data: { creditBalance: { decrement: price } },
+      }),
+      prisma.userWallet.upsert({
+        where: { telegramUserId: tier.creator.telegramUserId },
+        update: { creditBalance: { increment: price } },
+        create: { telegramUserId: tier.creator.telegramUserId, creditBalance: price },
+      }),
+      prisma.subscription.upsert({
+        where: { userId_creatorId: { userId, creatorId } },
+        update: { tierId, status: "ACTIVE", renewsAt },
+        create: { userId, creatorId, tierId, status: "ACTIVE", renewsAt },
+      }),
+    ]);
+  } else {
+    const renewsAt = new Date();
+    renewsAt.setMonth(renewsAt.getMonth() + 1);
     await prisma.subscription.upsert({
       where: { userId_creatorId: { userId, creatorId } },
       update: { tierId, status: "ACTIVE", renewsAt },
       create: { userId, creatorId, tierId, status: "ACTIVE", renewsAt },
     });
+  }
 
-    return Response.json({ success: true });
-  };
-
-  return paymentGate(handler, { config })(request);
+  return Response.json({ success: true });
 }

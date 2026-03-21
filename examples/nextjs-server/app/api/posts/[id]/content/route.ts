@@ -1,25 +1,25 @@
 import { NextRequest } from "next/server";
-import { paymentGate } from "@ton-x402/middleware";
-import { getPaymentConfig } from "../../../../../lib/payment-config";
 import { prisma } from "../../../../../lib/prisma";
-import { creditsToNano } from "../../../../../lib/credits";
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+  const userId = request.headers.get("x-telegram-user-id") ?? "anon";
 
-  const post = await prisma.post.findUnique({ where: { id } });
+  const post = await prisma.post.findUnique({
+    where: { id },
+    include: { creator: { select: { telegramUserId: true } } },
+  });
   if (!post) return Response.json({ error: "Not found" }, { status: 404 });
 
-  // Free content: return immediately
+  // Free content — no payment needed
   if (post.accessType === "FREE") {
     return Response.json({ contentUrl: post.contentUrl });
   }
 
-  // Check if already unlocked
-  const userId = request.headers.get("x-telegram-user-id") ?? "anon";
+  // Already unlocked — serve immediately
   const existingUnlock = await prisma.unlock.findUnique({
     where: { userId_postId: { userId, postId: id } },
   });
@@ -27,58 +27,68 @@ export async function GET(
     return Response.json({ contentUrl: post.contentUrl });
   }
 
-  // Check subscription for SUBSCRIBERS_ONLY
+  // Subscribers-only — check for active subscription
   if (post.accessType === "SUBSCRIBERS_ONLY") {
     const sub = await prisma.subscription.findUnique({
       where: { userId_creatorId: { userId, creatorId: post.creatorId } },
     });
-    if (sub && sub.status === "ACTIVE") {
+    if (sub?.status === "ACTIVE") {
       return Response.json({ contentUrl: post.contentUrl });
+    }
+    return Response.json(
+      { error: "Subscription required", accessType: "SUBSCRIBERS_ONLY", creatorId: post.creatorId },
+      { status: 402 }
+    );
+  }
+
+  // ONE_TIME_UNLOCK or GROUP_UNLOCK — deduct credits
+  const price = post.creditPrice;
+
+  if (price > 0) {
+    const userWallet = await prisma.userWallet.findUnique({
+      where: { telegramUserId: userId },
+    });
+    const balance = userWallet?.creditBalance ?? 0;
+
+    if (balance < price) {
+      return Response.json(
+        { error: "Insufficient credits", required: price, balance },
+        { status: 402 }
+      );
+    }
+
+    // Atomic: deduct from buyer + credit creator + record unlock
+    await prisma.$transaction([
+      prisma.userWallet.update({
+        where: { telegramUserId: userId },
+        data: { creditBalance: { decrement: price } },
+      }),
+      prisma.userWallet.upsert({
+        where: { telegramUserId: post.creator.telegramUserId },
+        update: { creditBalance: { increment: price } },
+        create: { telegramUserId: post.creator.telegramUserId, creditBalance: price },
+      }),
+      prisma.unlock.create({
+        data: { userId, postId: id, paidCredits: price },
+      }),
+    ]);
+  } else {
+    // Price is 0 — just record the unlock
+    await prisma.unlock.create({
+      data: { userId, postId: id, paidCredits: 0 },
+    });
+  }
+
+  // Group unlock — check if target reached
+  if (post.accessType === "GROUP_UNLOCK" && post.groupUnlockTarget) {
+    const updated = await prisma.post.update({
+      where: { id },
+      data: { groupUnlockCurrent: { increment: 1 } },
+    });
+    if (updated.groupUnlockCurrent >= updated.groupUnlockTarget) {
+      await prisma.post.update({ where: { id }, data: { accessType: "FREE" } });
     }
   }
 
-  // Build dynamic payment config
-  const amount = creditsToNano(post.creditPrice || 1);
-  const config = getPaymentConfig({
-    amount,
-    asset: process.env.JETTON_MASTER_ADDRESS || "TON",
-    description: `Unlock: ${post.title} (${post.creditPrice} credits)`,
-    decimals: post.accessType === "ONE_TIME_UNLOCK" || post.accessType === "GROUP_UNLOCK" ? 9 : undefined,
-  });
-
-  const handler = async (req: Request) => {
-    const uid = req.headers.get("x-telegram-user-id") ?? "anon";
-
-    // Write Unlock record (txHash confirmed separately via unlock-confirm)
-    await prisma.unlock.upsert({
-      where: { userId_postId: { userId: uid, postId: id } },
-      update: {},
-      create: {
-        userId: uid,
-        postId: id,
-        paidCredits: post.creditPrice,
-        txHash: null,
-      },
-    });
-
-    // Group unlock logic
-    if (post.accessType === "GROUP_UNLOCK") {
-      const updated = await prisma.post.update({
-        where: { id },
-        data: { groupUnlockCurrent: { increment: 1 } },
-      });
-      if (
-        updated.groupUnlockCurrent >= (updated.groupUnlockTarget ?? Infinity)
-      ) {
-        await prisma.post.update({
-          where: { id },
-          data: { accessType: "FREE" },
-        });
-      }
-    }
-
-    return Response.json({ contentUrl: post.contentUrl });
-  };
-
-  return paymentGate(handler, { config })(request);
+  return Response.json({ contentUrl: post.contentUrl });
 }

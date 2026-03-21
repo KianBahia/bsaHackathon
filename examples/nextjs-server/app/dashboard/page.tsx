@@ -10,7 +10,7 @@ import { FileUpload } from "../../components/FileUpload";
 import { useTelegram } from "../../components/TelegramProvider";
 import { createApiClient } from "../../lib/api-client";
 
-interface Earnings { totalCreditsEarned: number; subscriberCount: number; postCount: number; }
+interface Earnings { totalCreditsEarned: number; unlockCredits: number; subscriptionCredits: number; subscriberCount: number; postCount: number; withdrawableBalance: number; }
 interface Post { id: string; title: string; accessType: string; creditPrice: number; _count: { unlocks: number }; }
 interface Profile { id: string; displayName: string; bio?: string | null; avatarUrl?: string | null; }
 interface Tier { id: string; name: string; creditsPerMonth: number; description?: string | null; perks?: string | null; }
@@ -295,7 +295,7 @@ export default function DashboardPage() {
         ) : !notCreator && (
           <>
             {/* Stats */}
-            <div className="grid grid-cols-3 gap-2.5 mx-4 mb-5">
+            <div className="grid grid-cols-3 gap-2.5 mx-4 mb-3">
               {[
                 { label: "Earned",      value: earnings?.totalCreditsEarned ?? 0, Icon: TrendingUp, color: "text-ribbit" },
                 { label: "Subscribers", value: earnings?.subscriberCount ?? 0,    Icon: Users,      color: "text-tg-blue" },
@@ -307,6 +307,17 @@ export default function DashboardPage() {
                   <p className="text-[11px] text-label2 mt-1">{label}</p>
                 </div>
               ))}
+            </div>
+
+            {/* Withdrawable balance */}
+            <div className="mx-4 mb-5 bg-ribbit/10 border border-ribbit/20 rounded-2xl px-4 py-3 flex items-center justify-between">
+              <div>
+                <p className="text-[13px] text-label2">Available to withdraw</p>
+                <p className="text-[20px] font-bold text-ribbit leading-tight">
+                  {earnings?.withdrawableBalance ?? 0} credits
+                </p>
+              </div>
+              <Crown size={22} className="text-ribbit opacity-60" />
             </div>
 
             {/* Subscription Tiers */}
