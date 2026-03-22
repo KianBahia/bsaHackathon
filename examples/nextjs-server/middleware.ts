@@ -9,7 +9,6 @@ const BYPASS_PATTERNS = [
   /^\/api\/tonconnect-manifest$/,
   // Public read routes — no auth needed
   /^\/api\/creators/,
-  /^\/api\/posts\/[^/]+\/preview$/,
 ];
 
 async function validateTelegramInitData(
@@ -83,9 +82,8 @@ export async function middleware(request: NextRequest) {
   }
 
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
-  const isDev    = process.env.NODE_ENV !== "production";
 
-  // No bot token OR running in dev mode without real init data → inject mock user
+  // No bot token → pure local dev with no Telegram, inject stable mock user
   if (!botToken) {
     const requestHeaders = new Headers(request.headers);
     requestHeaders.set("x-telegram-user-id", "dev-user-123");
@@ -93,15 +91,10 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next({ request: { headers: requestHeaders } });
   }
 
+  // Bot token is configured — always require real Telegram auth.
+  // The dev bypass is intentionally removed here: once a bot token exists,
+  // real users are accessing the app and every user must get their own identity.
   const initData = request.headers.get("x-telegram-init-data");
-
-  // In development, allow requests with no init data and inject a stable dev user
-  if (!initData && isDev) {
-    const requestHeaders = new Headers(request.headers);
-    requestHeaders.set("x-telegram-user-id", "dev-user-123");
-    requestHeaders.set("x-telegram-username", "devuser");
-    return NextResponse.next({ request: { headers: requestHeaders } });
-  }
 
   if (!initData) {
     return NextResponse.json(

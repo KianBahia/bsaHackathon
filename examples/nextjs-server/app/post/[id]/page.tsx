@@ -14,6 +14,7 @@ interface Post {
   accessType: string; creditPrice: number;
   groupUnlockTarget?: number | null; groupUnlockCurrent: number;
   creator?: { id: string; displayName: string; avatarUrl?: string | null };
+  isUnlocked?: boolean; userBalance?: number;
 }
 
 const CREDITS_PER_TON = parseInt(process.env.NEXT_PUBLIC_CREDITS_PER_TON ?? "100", 10);
@@ -32,12 +33,14 @@ export default function PostPage({ params }: { params: Promise<{ id: string }> }
   const wallet = useTonWallet();
 
   useEffect(() => {
+    if (initData === null) return; // wait until TelegramProvider is ready
     createApiClient(initData)(`/api/posts/${id}/preview`)
       .then((r) => r.json())
       .then((data) => {
         setPost(data);
-        // Free posts include contentUrl directly — no unlock needed
-        if (data.accessType === "FREE" && data.contentUrl) {
+        // Preview now returns contentUrl + isUnlocked:true if user has already
+        // paid or is subscribed — no extra request or charge needed.
+        if (data.isUnlocked && data.contentUrl) {
           setContentUrl(data.contentUrl);
         }
       })
@@ -202,13 +205,21 @@ export default function PostPage({ params }: { params: Promise<{ id: string }> }
               </button>
             )}
             {post.accessType !== "SUBSCRIBERS_ONLY" ? (
-              <button onClick={handleUnlock} disabled={unlocking}
-                className="w-full bg-tg-blue text-white font-semibold py-4 rounded-2xl text-[17px] disabled:opacity-50 flex items-center justify-center gap-2 active:opacity-80">
-                {unlocking
-                  ? <><Loader2 size={18} className="animate-spin" />Processing…</>
-                  : <><Lock size={17} />Unlock · {post.creditPrice} credits</>
-                }
-              </button>
+              <>
+                <button onClick={handleUnlock} disabled={unlocking}
+                  className="w-full bg-tg-blue text-white font-semibold py-4 rounded-2xl text-[17px] disabled:opacity-50 flex items-center justify-center gap-2 active:opacity-80">
+                  {unlocking
+                    ? <><Loader2 size={18} className="animate-spin" />Processing…</>
+                    : <><Lock size={17} />Unlock · {post.creditPrice} credits</>
+                  }
+                </button>
+                {post.userBalance !== undefined && (
+                  <p className="text-center text-[12px] text-label2 mt-2">
+                    Your balance: {post.userBalance} credits
+                    {post.userBalance < post.creditPrice && " — top up in Wallet"}
+                  </p>
+                )}
+              </>
             ) : (
               <div className="bg-surface rounded-2xl p-4 text-center">
                 <p className="text-[15px] text-label2">Subscribers only — join a tier on the creator&apos;s profile</p>

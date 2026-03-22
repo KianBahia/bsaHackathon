@@ -1,7 +1,7 @@
 "use client";
 import { use, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, ChevronLeft, ChevronRight, Users } from "lucide-react";
+import { Check, CheckCircle2, ChevronLeft, Users } from "lucide-react";
 import { PostCard } from "../../../components/PostCard";
 import { BottomNav } from "../../../components/BottomNav";
 import { useInitData } from "../../../components/TelegramProvider";
@@ -17,21 +17,78 @@ export default function CreatorPage({ params }: { params: Promise<{ id: string }
   const [creator, setCreator] = useState<Creator | null>(null);
   const [loading, setLoading] = useState(true);
   const [subscribing, setSubscribing] = useState<string | null>(null);
+  // Set of tier IDs the user is actively subscribed to for this creator
+  const [subscribedTiers, setSubscribedTiers] = useState<Set<string>>(new Set());
+  const [userBalance, setUserBalance] = useState<number | null>(null);
+  const [lastCharged, setLastCharged] = useState<number | null>(null);
   const initData = useInitData();
 
   useEffect(() => {
-    createApiClient(initData)(`/api/creators/${id}`)
-      .then((r) => r.json()).then(setCreator).finally(() => setLoading(false));
+    if (initData === null) return;
+    const api = createApiClient(initData);
+    Promise.all([
+      api(`/api/creators/${id}`).then((r) => r.json()),
+      api(`/api/subscriptions`).then((r) => r.json()),
+      api(`/api/wallet/balance`).then((r) => r.json()),
+    ]).then(([creatorData, subs, walletData]) => {
+      setCreator(creatorData);
+      setUserBalance(walletData.creditBalance ?? 0);
+      const active = new Set<string>(
+        (Array.isArray(subs) ? subs : [])
+          .filter((s: any) => s.creator?.id === id && s.status === "ACTIVE")
+          .map((s: any) => s.tier?.id)
+          .filter(Boolean)
+      );
+      setSubscribedTiers(active);
+    }).finally(() => setLoading(false));
   }, [id, initData]);
 
   const handleSubscribe = async (tierId: string) => {
     setSubscribing(tierId);
-    const res = await createApiClient(initData)("/api/subscriptions", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tierId, creatorId: id }),
-    });
-    if (res.ok) alert("Subscribed!");
-    setSubscribing(null);
+    try {
+      const res = await createApiClient(initData)("/api/subscriptions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tierId, creatorId: id }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setSubscribedTiers((prev) => new Set(prev).add(tierId));
+        if (data.creditsCharged != null) {
+          setLastCharged(data.creditsCharged);
+          setUserBalance((prev) => (prev != null ? prev - data.creditsCharged : null));
+        }
+      } else {
+        alert(data.error ?? "Failed to subscribe");
+      }
+    } finally {
+      setSubscribing(null);
+    }
+  };
+
+  const handleUnsubscribe = async (tierId: string) => {
+    const confirmed = window.confirm("Unsubscribe? You will lose access to subscriber-only content.");
+    if (!confirmed) return;
+
+    setSubscribing(tierId);
+    try {
+      const res = await createApiClient(initData)("/api/subscriptions", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ creatorId: id }),
+      });
+      if (res.ok) {
+        setSubscribedTiers((prev) => {
+          const next = new Set(prev);
+          next.delete(tierId);
+          return next;
+        });
+      } else {
+        alert("Failed to unsubscribe");
+      }
+    } finally {
+      setSubscribing(null);
+    }
   };
 
   if (loading) return (
@@ -45,7 +102,6 @@ export default function CreatorPage({ params }: { params: Promise<{ id: string }
 
   return (
     <div className="min-h-screen bg-bg font-sans">
-      {/* Nav */}
       <header className="sticky top-0 z-40 bg-bg/90 backdrop-blur-xl h-14 flex items-center px-2">
         <div className="max-w-mobile mx-auto w-full flex items-center gap-1">
           <button onClick={() => router.back()} className="flex items-center gap-0.5 text-tg-blue px-2 py-2">
@@ -56,7 +112,7 @@ export default function CreatorPage({ params }: { params: Promise<{ id: string }
       </header>
 
       <main className="max-w-mobile mx-auto pb-28">
-        {/* Profile header — centered like BotFather */}
+        {/* Profile header */}
         <div className="flex flex-col items-center pt-4 pb-6 px-4">
           <div className="w-20 h-20 rounded-full overflow-hidden bg-elevated mb-3 ring-[3px] ring-sep">
             {creator.avatarUrl ? (
@@ -80,6 +136,8 @@ export default function CreatorPage({ params }: { params: Promise<{ id: string }
             <p className="text-[13px] font-semibold text-label2 uppercase tracking-wide px-4 mb-1">Membership</p>
             <div className="bg-surface rounded-2xl overflow-hidden mx-4">
               {creator.tiers.map((tier, i) => {
+                const isSubscribed = subscribedTiers.has(tier.id);
+                const isBusy = subscribing === tier.id;
                 const perks: string[] = tier.perks
                   ? tier.perks.split(/[,\n]+/).map((s) => s.trim()).filter(Boolean)
                   : [];
@@ -100,18 +158,37 @@ export default function CreatorPage({ params }: { params: Promise<{ id: string }
                           </ul>
                         )}
                       </div>
-                      <button
-                        onClick={() => handleSubscribe(tier.id)}
-                        disabled={subscribing === tier.id}
-                        className="flex-shrink-0 bg-tg-blue text-white text-[14px] font-semibold px-4 py-1.5 rounded-xl disabled:opacity-50 transition-opacity"
-                      >
-                        {subscribing === tier.id ? "…" : "Join"}
-                      </button>
+
+                      {isSubscribed ? (
+                        <button
+                          onClick={() => handleUnsubscribe(tier.id)}
+                          disabled={isBusy}
+                          className="flex-shrink-0 flex items-center gap-1.5 bg-ribbit/15 text-ribbit text-[14px] font-semibold px-4 py-1.5 rounded-xl disabled:opacity-50 transition-opacity"
+                        >
+                          {isBusy ? "…" : <><CheckCircle2 size={14} />Joined</>}
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handleSubscribe(tier.id)}
+                          disabled={isBusy}
+                          className="flex-shrink-0 bg-tg-blue text-white text-[14px] font-semibold px-4 py-1.5 rounded-xl disabled:opacity-50 transition-opacity"
+                        >
+                          {isBusy ? "…" : "Join"}
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
               })}
             </div>
+            {userBalance !== null && (
+              <p className="text-[12px] text-label2 text-center mt-2 px-4">
+                Your balance: {userBalance} credits
+                {lastCharged != null && lastCharged > 0 && (
+                  <span className="text-ribbit ml-1">· {lastCharged} credits charged</span>
+                )}
+              </p>
+            )}
           </div>
         )}
 

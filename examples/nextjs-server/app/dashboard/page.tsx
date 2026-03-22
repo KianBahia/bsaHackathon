@@ -3,8 +3,9 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   TrendingUp, Users, FileText, Plus, Lock, ChevronRight,
-  Star, PenLine, Check, X, Trash2, Crown,
+  Star, PenLine, Check, X, Trash2, Crown, Wallet, Loader2, CheckCircle2,
 } from "lucide-react";
+import { useTonWallet, TonConnectButton } from "@tonconnect/ui-react";
 import { BottomNav } from "../../components/BottomNav";
 import { FileUpload } from "../../components/FileUpload";
 import { useTelegram } from "../../components/TelegramProvider";
@@ -33,7 +34,13 @@ export default function DashboardPage() {
   const [savingTier, setSavingTier]       = useState(false);
   const [tierError, setTierError]         = useState<string | null>(null);
   const [deletingTierId, setDeletingTierId] = useState<string | null>(null);
+  // Withdrawal state
+  const [showWithdraw, setShowWithdraw] = useState(false);
+  const [withdrawCredits, setWithdrawCredits] = useState("");
+  const [withdrawing, setWithdrawing] = useState(false);
+  const [withdrawResult, setWithdrawResult] = useState<{ success: boolean; message: string } | null>(null);
   const { initData, user, isReady } = useTelegram();
+  const tonWallet = useTonWallet();
 
   useEffect(() => {
     if (!isReady) return;
@@ -166,6 +173,33 @@ export default function DashboardPage() {
       if (res.ok) setTiers((prev) => prev.filter((t) => t.id !== id));
     } finally {
       setDeletingTierId(null);
+    }
+  };
+
+  const handleWithdraw = async () => {
+    const credits = parseInt(withdrawCredits, 10);
+    const toAddress = tonWallet?.account?.address;
+    if (!toAddress) return;
+    setWithdrawing(true);
+    setWithdrawResult(null);
+    try {
+      const res = await createApiClient(initData)("/api/dashboard/withdraw", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ credits, toAddress }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setWithdrawResult({ success: true, message: data.message ?? `${data.tonAmount} TON sent!` });
+        setEarnings((prev) => prev ? { ...prev, withdrawableBalance: prev.withdrawableBalance - credits } : prev);
+        setWithdrawCredits("");
+      } else {
+        setWithdrawResult({ success: false, message: data.error ?? "Withdrawal failed" });
+      }
+    } catch {
+      setWithdrawResult({ success: false, message: "Network error — please try again" });
+    } finally {
+      setWithdrawing(false);
     }
   };
 
@@ -309,15 +343,86 @@ export default function DashboardPage() {
               ))}
             </div>
 
-            {/* Withdrawable balance */}
-            <div className="mx-4 mb-5 bg-ribbit/10 border border-ribbit/20 rounded-2xl px-4 py-3 flex items-center justify-between">
-              <div>
-                <p className="text-[13px] text-label2">Available to withdraw</p>
-                <p className="text-[20px] font-bold text-ribbit leading-tight">
-                  {earnings?.withdrawableBalance ?? 0} credits
-                </p>
+            {/* Withdrawable balance + withdraw form */}
+            <div className="mx-4 mb-5 bg-ribbit/10 border border-ribbit/20 rounded-2xl overflow-hidden">
+              <div className="px-4 py-3 flex items-center justify-between">
+                <div>
+                  <p className="text-[13px] text-label2">Available to withdraw</p>
+                  <p className="text-[20px] font-bold text-ribbit leading-tight">
+                    {earnings?.withdrawableBalance ?? 0} credits
+                    <span className="text-[13px] font-normal text-label2 ml-2">
+                      ≈ {((earnings?.withdrawableBalance ?? 0) / (parseInt(process.env.NEXT_PUBLIC_CREDITS_PER_TON ?? "100", 10))).toFixed(2)} TON
+                    </span>
+                  </p>
+                </div>
+                {(earnings?.withdrawableBalance ?? 0) >= parseInt(process.env.NEXT_PUBLIC_CREDITS_PER_TON ?? "100", 10) && (
+                  <button
+                    onClick={() => { setShowWithdraw((v) => !v); setWithdrawResult(null); }}
+                    className="flex items-center gap-1.5 bg-ribbit/20 text-ribbit text-[13px] font-semibold px-3 py-1.5 rounded-xl active:opacity-80"
+                  >
+                    <Wallet size={14} />Withdraw
+                  </button>
+                )}
               </div>
-              <Crown size={22} className="text-ribbit opacity-60" />
+
+              {showWithdraw && (
+                <div className="border-t border-ribbit/20 px-4 py-3 space-y-3">
+                  {/* TON wallet connection */}
+                  <div className="flex items-center justify-between">
+                    <p className="text-[13px] text-label2">Send to wallet</p>
+                    <TonConnectButton />
+                  </div>
+
+                  {tonWallet ? (
+                    <>
+                      <p className="text-[11px] text-label2 font-mono truncate">
+                        {tonWallet.account.address}
+                      </p>
+                      <div className="flex gap-2">
+                        <input
+                          type="number"
+                          value={withdrawCredits}
+                          onChange={(e) => setWithdrawCredits(e.target.value)}
+                          placeholder={`Credits (min ${process.env.NEXT_PUBLIC_CREDITS_PER_TON ?? "100"})`}
+                          className="flex-1 bg-bg border border-ribbit/30 text-white text-[14px] px-3 py-2 rounded-xl focus:outline-none focus:border-ribbit"
+                          min={parseInt(process.env.NEXT_PUBLIC_CREDITS_PER_TON ?? "100", 10)}
+                          max={earnings?.withdrawableBalance ?? 0}
+                          step={parseInt(process.env.NEXT_PUBLIC_CREDITS_PER_TON ?? "100", 10)}
+                        />
+                        <button
+                          onClick={() => setWithdrawCredits(String(earnings?.withdrawableBalance ?? 0))}
+                          className="text-[13px] text-ribbit px-3 py-2 rounded-xl bg-ribbit/10 active:opacity-70"
+                        >
+                          Max
+                        </button>
+                      </div>
+                      {withdrawCredits && (
+                        <p className="text-[12px] text-label2">
+                          = {(parseInt(withdrawCredits, 10) / parseInt(process.env.NEXT_PUBLIC_CREDITS_PER_TON ?? "100", 10)).toFixed(2)} TON
+                        </p>
+                      )}
+                      {withdrawResult && (
+                        <div className={`flex items-start gap-2 text-[13px] rounded-xl p-3 ${withdrawResult.success ? "bg-ribbit/10 text-ribbit" : "bg-red-950/40 text-red-400"}`}>
+                          {withdrawResult.success && <CheckCircle2 size={14} className="flex-shrink-0 mt-0.5" />}
+                          {withdrawResult.message}
+                        </div>
+                      )}
+                      <button
+                        onClick={handleWithdraw}
+                        disabled={withdrawing || !withdrawCredits || parseInt(withdrawCredits, 10) < parseInt(process.env.NEXT_PUBLIC_CREDITS_PER_TON ?? "100", 10)}
+                        className="w-full flex items-center justify-center gap-2 bg-ribbit text-white font-semibold py-2.5 rounded-xl text-[15px] disabled:opacity-50 active:opacity-80"
+                      >
+                        {withdrawing
+                          ? <><Loader2 size={16} className="animate-spin" />Sending…</>
+                          : "Withdraw to TON Wallet"
+                        }
+                      </button>
+                    </>
+                  ) : (
+                    <p className="text-[13px] text-label2 pb-1">Connect your TON wallet above to withdraw</p>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Subscription Tiers */}

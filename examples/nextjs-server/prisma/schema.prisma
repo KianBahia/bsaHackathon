@@ -19,6 +19,19 @@ model Creator {
   posts            Post[]
   tiers            SubscriptionTier[]
   subscriptions    Subscription[]
+  withdrawals      Withdrawal[]
+}
+
+model Withdrawal {
+  id        String   @id @default(cuid())
+  creatorId String
+  creator   Creator  @relation(fields: [creatorId], references: [id])
+  credits   Int
+  tonAmount String
+  toAddress String
+  txHash    String?
+  status    String   @default("PENDING")
+  createdAt DateTime @default(now())
 }
 
 model Post {

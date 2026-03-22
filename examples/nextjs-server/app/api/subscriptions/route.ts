@@ -1,6 +1,23 @@
 import { NextRequest } from "next/server";
 import { prisma } from "../../../lib/prisma";
 
+export async function DELETE(request: NextRequest) {
+  const userId = request.headers.get("x-telegram-user-id") ?? "anon";
+  const body = await request.json().catch(() => ({}));
+  const { creatorId } = body;
+
+  if (!creatorId) {
+    return Response.json({ error: "creatorId required" }, { status: 400 });
+  }
+
+  await prisma.subscription.updateMany({
+    where: { userId, creatorId, status: "ACTIVE" },
+    data: { status: "CANCELLED" },
+  });
+
+  return Response.json({ success: true });
+}
+
 export async function GET(req: NextRequest) {
   const userId = req.headers.get("x-telegram-user-id") ?? "anon";
   const subscriptions = await prisma.subscription.findMany({
@@ -56,9 +73,10 @@ export async function POST(request: NextRequest) {
 
     // Atomic: deduct from subscriber + credit creator + record subscription
     await prisma.$transaction([
-      prisma.userWallet.update({
+      prisma.userWallet.upsert({
         where: { telegramUserId: userId },
-        data: { creditBalance: { decrement: price } },
+        update: { creditBalance: { decrement: price } },
+        create: { telegramUserId: userId, creditBalance: 0 },
       }),
       prisma.userWallet.upsert({
         where: { telegramUserId: tier.creator.telegramUserId },
@@ -81,5 +99,5 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  return Response.json({ success: true });
+  return Response.json({ success: true, creditsCharged: price });
 }

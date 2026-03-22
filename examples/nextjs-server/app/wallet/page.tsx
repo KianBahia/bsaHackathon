@@ -11,10 +11,12 @@ import { createApiClient } from "../../lib/api-client";
 
 interface Transaction {
   id: string;
+  type: "unlock" | "subscription";
   paidCredits: number;
   paidAt: string;
   txHash?: string | null;
   post?: { title: string } | null;
+  subscription?: { tierName: string; creatorName: string } | null;
 }
 
 interface WalletData {
@@ -332,8 +334,17 @@ export default function WalletPage() {
                     <ArrowDownLeft size={17} className="text-red-400" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-[15px] text-white truncate">{tx.post?.title ?? "Unlock"}</p>
-                    <p className="text-[13px] text-label2">{new Date(tx.paidAt).toLocaleDateString()}</p>
+                    {tx.type === "subscription" ? (
+                      <>
+                        <p className="text-[15px] text-white truncate">{tx.subscription?.tierName ?? "Subscription"}</p>
+                        <p className="text-[13px] text-label2 truncate">{tx.subscription?.creatorName} · {new Date(tx.paidAt).toLocaleDateString()}</p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-[15px] text-white truncate">{tx.post?.title ?? "Unlock"}</p>
+                        <p className="text-[13px] text-label2">{new Date(tx.paidAt).toLocaleDateString()}</p>
+                      </>
+                    )}
                   </div>
                   <span className="text-[15px] font-semibold text-red-400">-{tx.paidCredits}</span>
                 </div>
