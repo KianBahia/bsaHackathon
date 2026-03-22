@@ -6,4 +6,6 @@ examples/.env
 .env.local
 *.tsbuildinfo
 .idea/
-examples/nextjs-server/.env.local
+examples/nextjs-server/.env.localpitch-deck/
+
+pitch-deck/
