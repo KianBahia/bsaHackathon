@@ -8,7 +8,7 @@ import { useInitData } from "../../../components/TelegramProvider";
 import { createApiClient } from "../../../lib/api-client";
 
 interface SubscriptionTier { id: string; name: string; creditsPerMonth: number; description?: string | null; perks?: string | null; }
-interface Post { id: string; title: string; description?: string | null; contentType: string; previewUrl?: string | null; accessType: string; creditPrice: number; groupUnlockTarget?: number | null; groupUnlockCurrent: number; }
+interface Post { id: string; title: string; description?: string | null; contentType: string; previewUrl?: string | null; accessType: string; creditPrice: number; groupUnlockTarget?: number | null; groupUnlockCurrent: number; isUnlocked?: boolean; }
 interface Creator { id: string; displayName: string; bio?: string | null; avatarUrl?: string | null; tiers: SubscriptionTier[]; _count: { subscriptions: number }; posts: Post[]; }
 
 export default function CreatorPage({ params }: { params: Promise<{ id: string }> }) {

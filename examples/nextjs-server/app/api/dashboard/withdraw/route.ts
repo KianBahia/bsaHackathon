@@ -1,10 +1,24 @@
 import { NextRequest } from "next/server";
 import { prisma } from "../../../../lib/prisma";
-import { TonClient, WalletContractV4, internal, Address } from "@ton/ton";
+import {
+  TonClient,
+  WalletContractV3R2,
+  WalletContractV4,
+  WalletContractV5R1,
+  internal,
+  Address,
+} from "@ton/ton";
 import { mnemonicToPrivateKey } from "@ton/crypto";
 import { toNano } from "@ton/core";
 
 const CREDITS_PER_TON = parseInt(process.env.CREDITS_PER_TON ?? "100", 10);
+
+function makeClient() {
+  return new TonClient({
+    endpoint: process.env.TON_RPC_URL ?? "https://testnet.toncenter.com/api/v2/jsonRPC",
+    ...(process.env.RPC_API_KEY ? { apiKey: process.env.RPC_API_KEY } : {}),
+  });
+}
 
 async function getTreasury() {
   const mnemonic = process.env.TREASURY_MNEMONIC;
@@ -12,12 +26,34 @@ async function getTreasury() {
 
   const words = mnemonic.trim().split(/\s+/);
   const keyPair = await mnemonicToPrivateKey(words);
-  const wallet = WalletContractV4.create({ publicKey: keyPair.publicKey, workchain: 0 });
-  const client = new TonClient({
-    endpoint: process.env.TON_RPC_URL ?? "https://testnet.toncenter.com/api/v2/jsonRPC",
-    ...(process.env.RPC_API_KEY ? { apiKey: process.env.RPC_API_KEY } : {}),
-  });
-  return { contract: client.open(wallet), keyPair };
+  const client = makeClient();
+
+  // Try wallet versions in order of likelihood (Tonkeeper now creates V5R1 by default)
+  const versions = [
+    { name: "V5R1", create: () => WalletContractV5R1.create({ publicKey: keyPair.publicKey, workchain: 0 }) },
+    { name: "V4",   create: () => WalletContractV4.create({ publicKey: keyPair.publicKey, workchain: 0 }) },
+    { name: "V3R2", create: () => WalletContractV3R2.create({ publicKey: keyPair.publicKey, workchain: 0 }) },
+  ];
+
+  for (const v of versions) {
+    const wallet = v.create();
+    const contract = client.open(wallet);
+    try {
+      const balance = await client.getBalance(wallet.address);
+      console.log(`[withdraw] ${v.name} address=${wallet.address.toString({ bounceable: false })} balance=${balance}`);
+      if (balance > 0n) {
+        console.log(`[withdraw] Using treasury wallet version ${v.name}`);
+        return { contract, keyPair, version: v.name };
+      }
+    } catch (e) {
+      console.log(`[withdraw] ${v.name} check failed: ${(e as Error).message}`);
+    }
+  }
+
+  // No version has a balance — still return V5R1 so the error is clear
+  console.warn("[withdraw] No treasury wallet version found with a balance — is the mnemonic correct and wallet funded?");
+  const wallet = WalletContractV5R1.create({ publicKey: keyPair.publicKey, workchain: 0 });
+  return { contract: client.open(wallet), keyPair, version: "V5R1-unfunded" };
 }
 
 export async function POST(request: NextRequest) {
@@ -79,7 +115,7 @@ export async function POST(request: NextRequest) {
 
   const treasury = await getTreasury();
 
-  // Dev / no treasury — simulate success without sending real TON
+  // No treasury configured — simulate
   if (!treasury) {
     await prisma.withdrawal.update({
       where: { id: withdrawal.id },
@@ -95,7 +131,10 @@ export async function POST(request: NextRequest) {
 
   // Send real TON from treasury to creator
   try {
-    const seqno = await treasury.contract.getSeqno();
+    let seqno = 0;
+    try { seqno = await treasury.contract.getSeqno(); } catch { seqno = 0; }
+    console.log(`[withdraw] seqno=${seqno} sending ${tonAmount} TON to ${parsedAddress.toString({ bounceable: false })}`);
+
     await treasury.contract.sendTransfer({
       secretKey: treasury.keyPair.secretKey,
       seqno,
@@ -120,6 +159,7 @@ export async function POST(request: NextRequest) {
       message: "TON sent! It should arrive in your wallet within ~30 seconds.",
     });
   } catch (err) {
+    console.error("[withdraw] TON send failed:", (err as Error).message);
     // Refund credits on failure
     await prisma.$transaction([
       prisma.userWallet.update({

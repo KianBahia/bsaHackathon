@@ -8,7 +8,7 @@ const BYPASS_PATTERNS = [
   /^\/api\/setup-webhook$/,
   /^\/api\/tonconnect-manifest$/,
   // Public read routes — no auth needed
-  /^\/api\/creators/,
+  /^\/api\/creators$/, // list only; detail routes need userId for unlock status
 ];
 
 async function validateTelegramInitData(
