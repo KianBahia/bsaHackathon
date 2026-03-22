@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Search, Users, ChevronRight } from "lucide-react";
 import { BottomNav } from "../components/BottomNav";
@@ -19,6 +20,14 @@ export default function HomePage() {
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const { user, initData, isReady } = useTelegram();
+  const router = useRouter();
+
+  useEffect(() => {
+    const startParam = window.Telegram?.WebApp?.initDataUnsafe?.start_param;
+    if (startParam?.startsWith("creator_")) {
+      router.replace(`/creator/${startParam.slice("creator_".length)}`);
+    }
+  }, []);
 
   useEffect(() => {
     if (!isReady) return;

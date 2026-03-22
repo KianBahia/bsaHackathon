@@ -1,7 +1,7 @@
 "use client";
 import { use, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, CheckCircle2, ChevronLeft, Users } from "lucide-react";
+import { Check, CheckCircle2, ChevronLeft, Share2, Users } from "lucide-react";
 import { PostCard } from "../../../components/PostCard";
 import { BottomNav } from "../../../components/BottomNav";
 import { useInitData } from "../../../components/TelegramProvider";
@@ -66,6 +66,15 @@ export default function CreatorPage({ params }: { params: Promise<{ id: string }
     }
   };
 
+  const handleShare = () => {
+    const botUsername = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME;
+    const shareUrl = `https://t.me/${botUsername}?startapp=creator_${id}`;
+    const text = creator ? `Check out ${creator.displayName} on Ribbit` : "Check out this creator on Ribbit";
+    window.Telegram?.WebApp?.openTelegramLink(
+      `https://t.me/share/url?url=${encodeURIComponent(shareUrl)}&text=${encodeURIComponent(text)}`
+    );
+  };
+
   const handleUnsubscribe = async (tierId: string) => {
     const confirmed = window.confirm("Unsubscribe? You will lose access to subscriber-only content.");
     if (!confirmed) return;
@@ -103,10 +112,14 @@ export default function CreatorPage({ params }: { params: Promise<{ id: string }
   return (
     <div className="min-h-screen bg-bg font-sans">
       <header className="sticky top-0 z-40 bg-bg/90 backdrop-blur-xl h-14 flex items-center px-2">
-        <div className="max-w-mobile mx-auto w-full flex items-center gap-1">
+        <div className="max-w-mobile mx-auto w-full flex items-center justify-between">
           <button onClick={() => router.back()} className="flex items-center gap-0.5 text-tg-blue px-2 py-2">
             <ChevronLeft size={22} strokeWidth={2.2} />
             <span className="text-[17px]">Back</span>
+          </button>
+          <button onClick={handleShare} className="flex items-center gap-1.5 text-tg-blue px-3 py-2">
+            <Share2 size={17} strokeWidth={2} />
+            <span className="text-[17px]">Share</span>
           </button>
         </div>
       </header>
