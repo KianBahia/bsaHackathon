@@ -9,3 +9,11 @@ Fans can pay using Telegram Stars — bought with Apple Pay, Google Pay, or any 
 Content is not limited to any format. Creators can post images, video, audio, PDFs, and links — including private Telegram group invites, Discord servers, or any URL. Ribbit also supports group unlocks: a creator sets a threshold (for example, 5 people) and the first supporters pay a small credit fee to unlock the content. Once the threshold is reached, the post becomes free for everyone. The creator earns, the content spreads.
 
 Every creator who shares their Ribbit page is also introducing their existing audience to Telegram Mini Apps. This makes each creator an organic distribution channel for the broader TON ecosystem at no acquisition cost.
+
+## How It Works
+
+The app is built on Next.js 15 with the App Router, running as a Telegram Mini App. Authentication is handled entirely through Telegram — every API request is validated server-side using HMAC-SHA256 of the Telegram `initData` payload, so no passwords or JWTs are needed.
+
+Payments run on two parallel tracks. Non-crypto users buy Telegram Stars through the native Bot Payments API, which are converted to off-chain Ribbit credits stored in a Prisma database. These credits are spent on unlocks and subscriptions with no blockchain interaction. Crypto users connect a TON wallet via TonConnect and pay directly on-chain using the x402 HTTP 402 payment protocol. When a creator withdraws, the platform treasury wallet sends real TON to their address — the transaction is broadcast via the TON RPC and is verifiable on TonScan.
+
+File uploads are handled through UploadThing. Content access is enforced server-side on every request — the API checks subscription status and per-post unlock records before returning any content URL.
