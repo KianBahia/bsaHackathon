@@ -3,22 +3,31 @@ import { prisma } from "../../../../lib/prisma";
 
 export async function GET(req: NextRequest) {
   const userId = req.headers.get("x-telegram-user-id") ?? "anon";
-  const wallet = await prisma.userWallet.upsert({
-    where: { telegramUserId: userId },
-    update: {},
-    create: { telegramUserId: userId, creditBalance: 0 },
-  });
 
-  const [unlocks, subscriptions] = await Promise.all([
+  // Run wallet upsert and transaction history fetches in parallel
+  const [wallet, unlocks, subscriptions] = await Promise.all([
+    prisma.userWallet.upsert({
+      where: { telegramUserId: userId },
+      update: {},
+      create: { telegramUserId: userId, creditBalance: 0 },
+    }),
     prisma.unlock.findMany({
       where: { userId },
-      include: { post: { select: { title: true, creatorId: true } } },
+      select: {
+        id: true,
+        paidCredits: true,
+        paidAt: true,
+        txHash: true,
+        post: { select: { title: true, creatorId: true } },
+      },
       orderBy: { paidAt: "desc" },
       take: 20,
     }),
     prisma.subscription.findMany({
       where: { userId },
-      include: {
+      select: {
+        id: true,
+        startedAt: true,
         tier: { select: { name: true, creditsPerMonth: true } },
         creator: { select: { displayName: true } },
       },

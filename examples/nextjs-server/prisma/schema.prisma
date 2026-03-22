@@ -32,6 +32,8 @@ model Withdrawal {
   txHash    String?
   status    String   @default("PENDING")
   createdAt DateTime @default(now())
+
+  @@index([creatorId])
 }
 
 model Post {
@@ -51,6 +53,9 @@ model Post {
   createdAt          DateTime  @default(now())
   publishedAt        DateTime?
   unlocks            Unlock[]
+
+  @@index([creatorId])
+  @@index([publishedAt])
 }
 
 model SubscriptionTier {
@@ -76,6 +81,8 @@ model Subscription {
   renewsAt  DateTime
 
   @@unique([userId, creatorId])
+  @@index([userId])
+  @@index([creatorId])
 }
 
 model Unlock {
@@ -88,6 +95,8 @@ model Unlock {
   paidAt      DateTime @default(now())
 
   @@unique([userId, postId])
+  @@index([userId])
+  @@index([postId])
 }
 
 model UserWallet {
