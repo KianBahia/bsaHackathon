@@ -1,4 +1,4 @@
-# Ribbit
+# Ribbit: @RibbitBot_Bot
 
 Ribbit is a creator monetisation platform built as a Telegram Mini App. Creators publish content — posts, media, documents, links — and fans pay to access it, all without leaving Telegram. There are no redirects, no new accounts, and no installs. Your Telegram account is your identity.
 
